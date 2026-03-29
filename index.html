@@ -1184,8 +1184,11 @@ function repHTML(r) {
     </div>
 
     <div class="rep-footer">
-      <button class="btn btn-primary btn-sm" onclick="generateOne(${r.id})" ${isGen ? 'disabled' : ''}>
-        ${isGen ? '<span class="spin"></span>' : '⚡'} Generate
+      <button class="btn btn-primary btn-sm" id="recbtn-${r.id}" onclick="toggleRecord(${r.id})">
+        🎙 Record Replacement
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="generateOne(${r.id})" ${isGen ? 'disabled' : ''}>
+        ${isGen ? '<span class="spin"></span>' : '⚡'} Generate (TTS)
       </button>
       ${r.status === 'ready' ? `<button class="btn btn-secondary btn-sm" onclick="previewOne(${r.id})">▶ Preview</button>` : ''}
       <div class="rep-status ${r.status}" style="margin-left:auto;">${statusLabel}</div>
@@ -1363,7 +1366,90 @@ function browserTranscribe(segment, id) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ELEVENLABS API
+   RECORD REPLACEMENT (microphone — no API needed)
+═══════════════════════════════════════════════════════════ */
+const recState = { activeId: null, recorder: null, chunks: [] };
+
+async function toggleRecord(id) {
+  if (recState.activeId === id) {
+    stopRecord(id);
+    return;
+  }
+  if (recState.activeId !== null) {
+    stopRecord(recState.activeId);
+  }
+  await startRecord(id);
+}
+
+async function startRecord(id) {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    recState.activeId = id;
+    recState.recorder = recorder;
+    recState.chunks = [];
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recState.chunks.push(e.data);
+    };
+
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (recState.chunks.length === 0) return;
+
+      const blob = new Blob(recState.chunks, { type: 'audio/webm' });
+      recState.chunks = [];
+      recState.activeId = null;
+      recState.recorder = null;
+
+      const r = state.replacements.find(r => r.id === id);
+      if (!r) return;
+
+      setStatus('Processing recording…', 'busy');
+      try {
+        const ab = await blob.arrayBuffer();
+        const ctx = getACtx();
+        r.audioBuffer = await ctx.decodeAudioData(ab);
+        r.status = 'ready';
+        toast('Recording saved as replacement!', 'success');
+        setStatus('Ready', 'ok');
+      } catch (e) {
+        r.status = 'error';
+        toast('Could not decode recording: ' + e.message, 'error');
+        setStatus('Recording failed', 'err');
+      }
+      renderReps();
+      drawWave();
+    };
+
+    recorder.start();
+    setStatus('🔴 Recording… click Stop when done', 'busy');
+    toast('Speak the corrected text now — click Stop when done', 'info');
+
+    const btn = document.getElementById(`recbtn-${id}`);
+    if (btn) {
+      btn.textContent = '⏹ Stop Recording';
+      btn.style.background = 'var(--danger)';
+    }
+  } catch (e) {
+    toast('Microphone access denied: ' + e.message, 'error');
+    recState.activeId = null;
+  }
+}
+
+function stopRecord(id) {
+  if (recState.recorder && recState.recorder.state !== 'inactive') {
+    recState.recorder.stop();
+  }
+  const btn = document.getElementById(`recbtn-${id}`);
+  if (btn) {
+    btn.textContent = '🎙 Record Replacement';
+    btn.style.background = '';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ELEVENLABS API (TTS — requires API key)
 ═══════════════════════════════════════════════════════════ */
 async function callTTS(text) {
   const { apiKey, voiceId, model, stability, similarity } = state.cfg;
