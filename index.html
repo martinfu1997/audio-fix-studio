@@ -207,19 +207,31 @@
     .rep-list{display:flex;flex-direction:column;gap:9px;padding:14px 16px;}
     .rep-item{
       background:var(--bg-secondary);border:1px solid var(--border);
-      border-radius:8px;padding:12px;
-      display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;
+      border-radius:8px;padding:14px;
+      display:flex;flex-direction:column;gap:10px;
       transition:border-color .2s;
     }
     .rep-item.status-ready{border-color:rgba(0,212,170,.3);}
     .rep-item.status-error{border-color:rgba(255,51,85,.25);}
-    .rep-time-block{}
+    .rep-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
     .rep-time{
       font-family:var(--font-mono);font-size:12px;color:var(--accent);
       background:var(--bg-tertiary);border:1px solid var(--border-light);
       padding:4px 8px;border-radius:5px;white-space:nowrap;display:inline-block;
     }
-    .rep-dur{font-size:11px;color:var(--text-muted);margin-top:4px;}
+    .rep-dur{font-size:11px;color:var(--text-muted);}
+    .rep-field-label{
+      font-size:11px;font-weight:600;color:var(--text-secondary);
+      text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;
+    }
+    .rep-original{
+      background:var(--bg-primary);border:1px solid var(--border);
+      border-radius:6px;padding:8px 10px;
+      font-size:13px;color:var(--text-secondary);min-height:36px;
+      line-height:1.5;
+    }
+    .rep-original.has-text{color:var(--text-primary);font-style:normal;}
+    .rep-original.empty{font-style:italic;color:var(--text-muted);font-size:12px;}
     .rep-textarea{
       width:100%;padding:8px 10px;
       background:var(--bg-tertiary);border:1px solid var(--border-light);
@@ -227,8 +239,8 @@
       outline:none;resize:vertical;min-height:58px;
     }
     .rep-textarea:focus{border-color:var(--accent);}
-    .rep-actions{display:flex;flex-direction:column;gap:5px;align-items:flex-end;}
-    .rep-status{font-size:11px;color:var(--text-muted);text-align:right;margin-top:2px;}
+    .rep-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+    .rep-status{font-size:11px;color:var(--text-muted);}
     .rep-status.ready{color:var(--success);}
     .rep-status.generating{color:var(--warning);}
     .rep-status.error{color:var(--danger);}
@@ -339,8 +351,8 @@
     ::-webkit-scrollbar-thumb:hover{background:#6e7681;}
     @media(max-width:600px){
       .mark-row{flex-direction:column;align-items:stretch;}
-      .rep-item{grid-template-columns:1fr;grid-template-rows:auto auto auto;}
-      .rep-actions{flex-direction:row;flex-wrap:wrap;}
+      .rep-header{flex-direction:column;align-items:stretch;}
+      .rep-footer{flex-direction:column;align-items:stretch;}
     }
   </style>
 </head>
@@ -489,7 +501,7 @@
 <div class="statusbar">
   <div class="status-dot" id="statusDot"></div>
   <span id="statusMsg">Ready</span>
-  <span style="margin-left:auto;">Audio Fix Studio v1.1 · No backend required</span>
+  <span style="margin-left:auto;">Audio Fix Studio v1.2 · No backend required</span>
 </div>
 
 <!-- ═══════════════ TOAST SHELF ═══════════════ -->
@@ -548,6 +560,24 @@
         </div>
         <span class="fg-hint">Controls similarity to the original voice</span>
       </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:4px 0;">
+      <div class="fg">
+        <label>Transcription Language</label>
+        <select id="cfgTransLang">
+          <option value="">Auto-detect (browser default)</option>
+          <option value="zh-TW">中文 (繁體)</option>
+          <option value="zh-CN">中文 (简体)</option>
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="ja-JP">日本語</option>
+          <option value="ko-KR">한국어</option>
+          <option value="es-ES">Español</option>
+          <option value="fr-FR">Français</option>
+          <option value="de-DE">Deutsch</option>
+        </select>
+        <span class="fg-hint">Language used when transcribing marked sections via microphone</span>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
@@ -595,7 +625,8 @@ const state = {
     voiceId: '21m00Tcm4TlvDq8ikWAM',
     model: 'eleven_turbo_v2_5',
     stability: 0.5,
-    similarity: 0.75
+    similarity: 0.75,
+    transcriptionLang: ''
   }
 };
 
@@ -638,6 +669,7 @@ function openSettings() {
   document.getElementById('cfgSimilarity').value = c.similarity;
   document.getElementById('stbVal').textContent = c.stability.toFixed(2);
   document.getElementById('simVal').textContent = c.similarity.toFixed(2);
+  document.getElementById('cfgTransLang').value = c.transcriptionLang || '';
   document.getElementById('settingsOverlay').classList.remove('hidden');
 }
 
@@ -651,6 +683,7 @@ function saveSettings() {
   state.cfg.model     = document.getElementById('cfgModel').value;
   state.cfg.stability = parseFloat(document.getElementById('cfgStability').value);
   state.cfg.similarity= parseFloat(document.getElementById('cfgSimilarity').value);
+  state.cfg.transcriptionLang = document.getElementById('cfgTransLang').value;
   localStorage.setItem('afs_cfg', JSON.stringify(state.cfg));
   closeSettings();
   updateBanner();
@@ -1044,24 +1077,26 @@ function addSection() {
     toast('Section must be at least 0.05 seconds', 'error'); return;
   }
 
+  const newId = state.nextId++;
   state.replacements.push({
-    id: state.nextId++,
+    id: newId,
     start: s,
     end: e,
+    originalText: '',
     text: '',
     audioBuffer: null,
-    status: 'pending'  // pending | generating | ready | error
+    status: 'pending'
   });
   state.replacements.sort((a, b) => a.start - b.start);
 
-  // Clear selection
   state.selStart = state.selEnd = null;
   document.getElementById('inStart').value = '';
   document.getElementById('inEnd').value   = '';
 
   renderReps();
   drawWave();
-  toast(`Section added: ${fmt(s)} – ${fmt(e)}`, 'info');
+  toast(`Section added: ${fmt(s)} – ${fmt(e)} — transcribing…`, 'info');
+  setTimeout(() => transcribeSection(newId), 300);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1096,28 +1131,42 @@ function repHTML(r) {
   }[r.status] || '';
 
   const isGen = r.status === 'generating';
+  const hasOrig = r.originalText.trim().length > 0;
 
   return `
   <div class="rep-item status-${r.status}" id="ri-${r.id}">
-    <div class="rep-time-block">
+    <div class="rep-header">
       <div class="rep-time">${fmt(r.start)} – ${fmt(r.end)}</div>
       <div class="rep-dur">${fmtDur(r.end - r.start)}</div>
-      <button class="btn btn-secondary btn-sm transcribe-btn" onclick="transcribeSection(${r.id})" style="margin-top:6px;font-size:11px;">
-        🎤 Transcribe
-      </button>
+      <button class="btn btn-secondary btn-sm" onclick="playSection(${r.id})" title="Listen to this section">▶ Play</button>
+      <button class="btn btn-secondary btn-sm transcribe-btn" onclick="transcribeSection(${r.id})" title="Auto-transcribe via microphone">🎤 Transcribe</button>
+      <div style="margin-left:auto;">
+        <button class="btn btn-danger btn-sm" onclick="deleteRep(${r.id})">✕</button>
+      </div>
     </div>
-    <textarea class="rep-textarea"
-      placeholder="Click 🎤 Transcribe to auto-fill, or type the corrected text here…"
-      onchange="repsetText(${r.id},this.value)"
-      oninput="repsetText(${r.id},this.value)"
-    >${escHtml(r.text)}</textarea>
-    <div class="rep-actions">
+
+    <div>
+      <div class="rep-field-label">🔊 Original (what was said)</div>
+      <div class="rep-original ${hasOrig ? 'has-text' : 'empty'}" id="ro-${r.id}">
+        ${hasOrig ? escHtml(r.originalText) : 'Click ▶ Play to listen, then 🎤 Transcribe to auto-fill…'}
+      </div>
+    </div>
+
+    <div>
+      <div class="rep-field-label">✏️ Corrected (what it should say)</div>
+      <textarea class="rep-textarea"
+        placeholder="Type the correct text here — this will be used to generate replacement audio"
+        onchange="repsetText(${r.id},this.value)"
+        oninput="repsetText(${r.id},this.value)"
+      >${escHtml(r.text)}</textarea>
+    </div>
+
+    <div class="rep-footer">
       <button class="btn btn-primary btn-sm" onclick="generateOne(${r.id})" ${isGen ? 'disabled' : ''}>
         ${isGen ? '<span class="spin"></span>' : '⚡'} Generate
       </button>
       ${r.status === 'ready' ? `<button class="btn btn-secondary btn-sm" onclick="previewOne(${r.id})">▶ Preview</button>` : ''}
-      <button class="btn btn-danger btn-sm" onclick="deleteRep(${r.id})">✕</button>
-      <div class="rep-status ${r.status}">${statusLabel}</div>
+      <div class="rep-status ${r.status}" style="margin-left:auto;">${statusLabel}</div>
     </div>
   </div>`;
 }
@@ -1143,70 +1192,106 @@ function updateActionBtns() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TRANSCRIBE SECTION (Web Speech API)
+   PLAY SECTION
+═══════════════════════════════════════════════════════════ */
+function extractSegment(r) {
+  const buf = state.originalBuffer;
+  if (!buf) return null;
+  const ctx = getACtx();
+  const sr = buf.sampleRate;
+  const ch = buf.numberOfChannels;
+  const s0 = Math.floor(r.start * sr);
+  const s1 = Math.min(Math.floor(r.end * sr), buf.length);
+  const len = s1 - s0;
+  if (len < 1) return null;
+  const seg = ctx.createBuffer(ch, len, sr);
+  for (let c = 0; c < ch; c++) {
+    seg.copyToChannel(buf.getChannelData(c).subarray(s0, s1), c);
+  }
+  return seg;
+}
+
+function playSection(id) {
+  const r = state.replacements.find(r => r.id === id);
+  if (!r) return;
+  const seg = extractSegment(r);
+  if (!seg) { toast('Cannot extract section', 'error'); return; }
+  pauseAudio();
+  playAudio(seg, 0);
+  toast(`Playing: ${fmt(r.start)} – ${fmt(r.end)}`, 'info');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TRANSCRIBE SECTION (Web Speech API — plays audio through
+   speakers and listens via microphone)
 ═══════════════════════════════════════════════════════════ */
 async function transcribeSection(id) {
   const r = state.replacements.find(r => r.id === id);
-  if (!r || !state.buffer) return;
+  if (!r || !state.originalBuffer) return;
 
-  const ctx = getACtx();
-  const sr = state.buffer.sampleRate;
-  const ch = state.buffer.numberOfChannels;
-  const startSamp = Math.floor(r.start * sr);
-  const endSamp = Math.min(Math.floor(r.end * sr), state.buffer.length);
-  const len = endSamp - startSamp;
-  if (len < 1) { toast('Section too short to transcribe', 'error'); return; }
+  const seg = extractSegment(r);
+  if (!seg) { toast('Section too short to transcribe', 'error'); return; }
 
-  const segment = ctx.createBuffer(ch, len, sr);
-  for (let c = 0; c < ch; c++) {
-    segment.copyToChannel(state.buffer.getChannelData(c).subarray(startSamp, endSamp), c);
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    toast('Speech recognition not supported — use Chrome, or type the text manually', 'error');
+    return;
   }
 
-  setStatus('Transcribing…', 'busy');
+  const ctx = getACtx();
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  setStatus('Transcribing… playing audio + listening via mic', 'busy');
   const el = document.getElementById(`ri-${id}`);
   const btn = el?.querySelector('.transcribe-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Listening…'; }
-
-  const source = ctx.createMediaStreamDestination();
-  const src = ctx.createBufferSource();
-  src.buffer = segment;
-  src.connect(source);
-
-  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    toast('Speech recognition not supported in this browser. Use Chrome.', 'error');
-    setStatus('Ready', 'ok');
-    if (btn) { btn.disabled = false; btn.textContent = '🎤 Transcribe'; }
-    return;
-  }
+  const origEl = document.getElementById(`ro-${id}`);
+  if (origEl) { origEl.textContent = '🎧 Listening…'; origEl.className = 'rep-original empty'; }
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognition = new SpeechRecognition();
   recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = 'en-US';
+  recognition.interimResults = true;
+  recognition.lang = state.cfg.transcriptionLang || navigator.language || 'en-US';
 
   let transcript = '';
   recognition.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) transcript += e.results[i][0].transcript + ' ';
+    transcript = '';
+    for (let i = 0; i < e.results.length; i++) {
+      transcript += e.results[i][0].transcript;
     }
+    if (origEl) { origEl.textContent = transcript || '…'; origEl.className = 'rep-original has-text'; }
   };
 
   recognition.onerror = (e) => {
-    if (e.error !== 'no-speech') toast(`Speech recognition: ${e.error}`, 'error');
+    if (e.error !== 'no-speech' && e.error !== 'aborted') {
+      toast(`Recognition: ${e.error}`, 'warn');
+    }
   };
 
   recognition.onend = () => {
-    r.text = transcript.trim() || r.text;
+    const final = transcript.trim();
+    r.originalText = final || r.originalText;
+    if (final && !r.text) r.text = final;
     renderReps();
     setStatus('Ready', 'ok');
-    toast(transcript.trim() ? 'Transcription complete — edit the text if needed' : 'No speech detected', transcript.trim() ? 'success' : 'warn');
+    if (final) {
+      toast('Transcription done — edit the corrected text, then Generate', 'success');
+    } else {
+      toast('No speech detected — click ▶ Play to listen and type manually', 'warn');
+    }
   };
+
+  // Play the section through speakers so the user hears it
+  // and the microphone can potentially pick it up for recognition
+  pauseAudio();
+  const src = ctx.createBufferSource();
+  src.buffer = seg;
+  src.connect(state.gainNode);
 
   recognition.start();
   src.start();
   src.onended = () => {
-    setTimeout(() => recognition.stop(), 800);
+    setTimeout(() => { try { recognition.stop(); } catch {} }, 1200);
   };
 }
 
